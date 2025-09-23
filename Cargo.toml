@@ -2,6 +2,11 @@
 name = "web-task"
 version = "1.0.0"
 edition = "2024"
+license = "MIT OR Apache-2.0"
+include = ["/LICENSE-*", "/src"]
+readme = "./README.md"
+description = "The simplest way to run async tasks on the web"
+repository = "https://github.com/NthTensor/web-task"
 
 [dependencies]
 async-task = { version = "4.7.1", default-features = false }
