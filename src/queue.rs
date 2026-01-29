@@ -1,11 +1,17 @@
+//! Provides a local task queue that periodically executes a batch of queued
+//! jobs within a browser microtask.
+//!
+//! When multithreaded (using the atomics target feature) this queue is
+//! thread-local.
+
 use alloc::collections::VecDeque;
 use alloc::rc::Rc;
-use async_task::Runnable;
-use core::cell::{Cell, RefCell};
+use core::cell::{Cell, OnceCell, RefCell};
 use core::mem;
-use js_sys::Promise;
-use std::ops::DerefMut;
+use core::ops::DerefMut;
 use wasm_bindgen::prelude::*;
+
+use crate::runtime::Job;
 
 #[wasm_bindgen]
 extern "C" {
@@ -13,16 +19,13 @@ extern "C" {
     fn queueMicrotask(closure: &Closure<dyn FnMut(JsValue)>);
 
     type Global;
-
-    #[wasm_bindgen(method, getter, js_name = queueMicrotask)]
-    fn hasQueueMicrotask(this: &Global) -> JsValue;
 }
 
 struct QueueState {
     // The queue of Tasks which are to be run in order. In practice this is all the
     // synchronous work of futures, and each `Task` represents calling `poll` on
     // a future "at the right time".
-    runnables: RefCell<VecDeque<Runnable>>,
+    jobs: RefCell<VecDeque<Job>>,
 
     // This flag indicates whether we've scheduled `run_all` to run in the future.
     // This is used to ensure that it's only scheduled once.
@@ -35,10 +38,11 @@ impl QueueState {
         let _was_scheduled = self.is_scheduled.replace(false);
         debug_assert!(_was_scheduled);
 
-        // Takes everything already scheduled and runs it. Tasks scheduled after this point will run in the next microtask.
-        let runnables = mem::take(self.runnables.borrow_mut().deref_mut());
-        for runnable in runnables {
-            runnable.run();
+        // Takes everything already scheduled and runs it. Tasks scheduled after
+        // this point will run in the next microtask.
+        let jobs = mem::take(self.jobs.borrow_mut().deref_mut());
+        for job in jobs {
+            job.run();
         }
 
         // All of the Tasks have been run, so it's now possible to schedule the
@@ -48,25 +52,15 @@ impl QueueState {
 
 pub(crate) struct Queue {
     state: Rc<QueueState>,
-    promise: Promise,
     closure: Closure<dyn FnMut(JsValue)>,
-    has_queue_microtask: bool,
 }
 
 impl Queue {
     // Schedule a task to run on the next tick.
-    pub(crate) fn schedule(runnable: Runnable) {
-        Self::with(|queue| {
-            queue.state.runnables.borrow_mut().push_back(runnable);
-            // Use queueMicrotask to execute as soon as possible. If it does not exist
-            // fall back to the promise resolution
-            if !queue.state.is_scheduled.replace(true) {
-                if queue.has_queue_microtask {
-                    queueMicrotask(&queue.closure);
-                } else {
-                    let _ = queue.promise.then(&queue.closure);
-                }
-            }
+    pub(crate) fn enqueue(job: Job) {
+        Queue::with(|queue| {
+            queue.state.jobs.borrow_mut().push_back(job);
+            queueMicrotask(&queue.closure);
         })
     }
 }
@@ -75,41 +69,29 @@ impl Queue {
     fn new() -> Self {
         let state = Rc::new(QueueState {
             is_scheduled: Cell::new(false),
-            runnables: RefCell::new(VecDeque::new()),
+            jobs: RefCell::new(VecDeque::new()),
         });
-
-        let has_queue_microtask = js_sys::global()
-            .unchecked_into::<Global>()
-            .hasQueueMicrotask()
-            .is_function();
-
         Self {
-            promise: Promise::resolve(&JsValue::undefined()),
-
             closure: {
                 let state = Rc::clone(&state);
-
-                // This closure will only be called on the next microtask event
-                // tick
                 Closure::new(move |_| state.run_all())
             },
-
             state,
-            has_queue_microtask,
         }
     }
 
-    fn with<R>(f: impl FnOnce(&Self) -> R) -> R {
-        use once_cell::unsync::Lazy;
+    pub fn with<R>(f: impl FnOnce(&Self) -> R) -> R {
+        struct Wrapper<T>(OnceCell<T>);
 
-        struct Wrapper<T>(Lazy<T>);
-
+        #[cfg(not(target_feature = "atomics"))]
         unsafe impl<T> Sync for Wrapper<T> {}
 
+        #[cfg(not(target_feature = "atomics"))]
         unsafe impl<T> Send for Wrapper<T> {}
 
-        static QUEUE: Wrapper<Queue> = Wrapper(Lazy::new(Queue::new));
+        #[cfg_attr(target_feature = "atomics", thread_local)]
+        static QUEUE: Wrapper<Queue> = Wrapper(OnceCell::new());
 
-        f(&QUEUE.0)
+        f(&QUEUE.0.get_or_init(Queue::new))
     }
 }
