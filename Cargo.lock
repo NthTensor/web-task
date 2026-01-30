@@ -137,7 +137,7 @@ dependencies = [
 
 [[package]]
 name = "web-task"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "async-task",
  "cfg-if",
