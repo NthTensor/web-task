@@ -60,7 +60,9 @@ impl Queue {
     pub(crate) fn enqueue(job: Job) {
         Queue::with(|queue| {
             queue.state.jobs.borrow_mut().push_back(job);
-            queueMicrotask(&queue.closure);
+            if !queue.state.is_scheduled.replace(true) {
+                queueMicrotask(&queue.closure);
+            }
         })
     }
 }
