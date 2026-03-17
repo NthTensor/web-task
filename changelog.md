@@ -24,3 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Modified
 
 - Updated README
+
+## [1.1.2] - 2026-03-16
+
+### Fixed
+
+- Fixed duplicate scheduling bug
