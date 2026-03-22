@@ -23,10 +23,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Modified
 
-- Updated README
+- Updated README.
 
 ## [1.1.2] - 2026-03-16
 
 ### Fixed
 
-- Fixed duplicate scheduling bug
+- Fixed duplicate scheduling bug.
+
+## [1.1.3] - 2026-03-21
+
+### Added
+
+- Single-threaded test suite.
+- Thread-safety test suite.
+
+### Fixed
+
+- Various small issues with the thread-safe backend.
+
+### Modified
+
+- Added testing instructions to README.

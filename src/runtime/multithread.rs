@@ -36,15 +36,27 @@ pub(crate) struct LocalRunnable {
     state: AtomicI32,
     /// Contains the runnable that will be executed when the promise resolves.
     runnable: UnsafeCell<Option<Runnable>>,
+    /// A continuation with a weak self-reference that calls `run_to_completion`.
+    continuation: UnsafeCell<Closure<dyn FnMut(JsValue)>>,
 }
 
 impl LocalRunnable {
     /// Creates a new local runnable.
     fn new() -> Arc<LocalRunnable> {
-        Arc::new(Self {
+        let this = Arc::new(Self {
             state: AtomicI32::new(WAITING),
             runnable: UnsafeCell::new(None),
-        })
+            continuation: UnsafeCell::new(Closure::new(drop)),
+        });
+        let this_weak = Arc::downgrade(&this);
+        // SAFETY: We have trivial exclusive access at this point.
+        let continuation_ref = unsafe { &mut *this.continuation.get() };
+        *continuation_ref = Closure::new(move |_| {
+            // SAFETY: This will always execute on the same thread as
+            // the caller, and we are allowed to call it recursively.
+            unsafe { LocalRunnable::run_to_completion(&this_weak) }
+        });
+        this
     }
 
     /// Stores the runnable and causes the `waitAsync()` promise in
@@ -87,8 +99,8 @@ impl LocalRunnable {
 
         // SAFETY: The spin-lock above ensures we have exlusive access to this
         // value, which allows us to alias it mutably.
-        let runnable_ref = unsafe { &mut *this.runnable.get() };
-        debug_assert_eq!(*runnable_ref, None);
+        let runnable_ref = unsafe { &mut *self.runnable.get() };
+        debug_assert!(runnable_ref.is_none());
         *runnable_ref = Some(runnable);
 
         // Now we can release the lock. This uses the `Release` memory ordering
@@ -124,9 +136,9 @@ impl LocalRunnable {
             return;
         };
 
-        /// Ideally, we want to take the state from READY to LOCKED here, so
-        /// that we can safely read the runnable from the local field. As with
-        /// `schedule`, there are three possible valid cases to handle.
+        // Ideally, we want to take the state from READY to LOCKED here, so
+        // that we can safely read the runnable from the local field. As with
+        // `schedule`, there are three possible valid cases to handle.
         loop {
             // This uses the `Acquire` memory ording to ensure we can access the
             // runnable after the load.
@@ -178,16 +190,10 @@ impl LocalRunnable {
         // thread. The call to `wait` returns a promise if the future has not
         // yet been re-scheduled, and `None` if it has.
         if let Some(promise) = this.wait() {
-            // If the task has not been re-scheduled, we set up a closure to run
-            // when it is. This closure will simply call this function again,
-            // but it will do so on this thread (not the waker's thread).
-            let this_weak = this_weak.clone();
-            let continuation = Closure::new(move |_| {
-                // SAFETY: This will always execute on the same thread as
-                // the caller, and we are allowed to call it recursively.
-                unsafe { LocalRunnable::run_to_completion(&this_weak) }
-            });
-            drop(promise.then(&continuation));
+            // SAFETY: This continuation is only accessed immutably after
+            // construction.
+            let continuation_ref = unsafe { &*this.continuation.get() };
+            drop(promise.then(continuation_ref));
         } else {
             // If the future has already been rescheduled, we can add it back to
             // the queue. This will cause it to execute again in the next

@@ -19,7 +19,6 @@ mod runtime {
         if #[cfg(target_feature = "atomics")] {
             mod multithread;
             pub(crate) use multithread::*;
-
         } else {
             mod singlethread;
             pub(crate) use singlethread::*;
