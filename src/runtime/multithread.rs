@@ -75,7 +75,7 @@ impl LocalRunnable {
         // three possible valid cases to handle.
         loop {
             match self.state.swap(LOCKED, Ordering::Relaxed) {
-                // If we  were in the WAITING state, we have sucessfully aquired
+                // If we were in the WAITING state, we have successfully acquired
                 // the lock and can progress to storing the runnable.
                 WAITING => break,
                 // If we were in the LOCKED state (extreamly unlikely) then we
@@ -85,11 +85,11 @@ impl LocalRunnable {
                 //
                 // In either case, we simply spin while the lock is held. The
                 // chance that the local runnable remains locked for multiple
-                // iterations of this loop is extreamly low.
+                // iterations of this loop is extremely low.
                 LOCKED => continue,
                 // If we were in the READY state, that's implies that there are
                 // somehow multiple copies of `runnable` floating around. This
-                // is almost certantly a bug, and we have no choice but to
+                // is almost certainly a bug, and we have no choice but to
                 // panic.
                 READY => panic!("tried to schedule already scheduled task"),
                 // Any other state is invalid.
@@ -97,7 +97,7 @@ impl LocalRunnable {
             }
         }
 
-        // SAFETY: The spin-lock above ensures we have exlusive access to this
+        // SAFETY: The spin-lock above ensures we have exclusive access to this
         // value, which allows us to alias it mutably.
         let runnable_ref = unsafe { &mut *self.runnable.get() };
         debug_assert!(runnable_ref.is_none());
@@ -162,7 +162,7 @@ impl LocalRunnable {
             }
         }
 
-        // SAFETY: The spin-lock above ensures we have exlusive access to this
+        // SAFETY: The spin-lock above ensures we have exclusive access to this
         // value, which allows us to alias it mutably.
         let runnable_ref = unsafe { &mut *this.runnable.get() };
         let runnable = core::mem::take(runnable_ref).unwrap();
@@ -177,8 +177,7 @@ impl LocalRunnable {
         runnable.run();
 
         // If this function is the only thing keeping the local runnable
-        // alive, the future has been dropped; don't schedule a
-        // condinuation.
+        // alive, the future has been dropped; don't schedule a continuation.
         //
         // This _theoretically_ prevents a js-side memory leak, where we
         // create promises for futures that will never resolve.
@@ -223,9 +222,6 @@ impl LocalRunnable {
 
             #[wasm_bindgen(static_method_of = Atomics, js_name = waitAsync)]
             fn wait_async(buf: &js_sys::Int32Array, index: u32, value: i32) -> WaitAsyncResult;
-
-            #[wasm_bindgen(static_method_of = Atomics, js_name = waitAsync, getter)]
-            fn get_wait_async() -> JsValue;
 
             #[wasm_bindgen(method, getter, structural, js_name = async)]
             fn async_(this: &WaitAsyncResult) -> bool;
